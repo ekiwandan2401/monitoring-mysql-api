@@ -2,8 +2,7 @@ const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { UNAUTHORIZED, FORBIDDEN } = require('http-status-codes'); // Add this line
-
+const { UNAUTHORIZED, FORBIDDEN, OK } = require('http-status-codes');
 const cors = require('cors');
 
 const prisma = new PrismaClient();
@@ -12,8 +11,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 const jwtSecretKey = 'defaultSecretKey';
+const refreshSecretKey = 'refreshSecretKey';
 
-// Endpoint for user registration
+const generateRefreshToken = (userId, username) => {
+    return jwt.sign({ user: { id: userId, username } }, refreshSecretKey, { expiresIn: '7d' });
+};
+
 app.post('/api/register', async (req, res) => {
     try {
         const { name, username, email, password } = req.body;
@@ -81,11 +84,34 @@ app.post('/api/login', async (req, res) => {
         }
 
         const token = jwt.sign({ user: { id: user.id, username: user.username } }, jwtSecretKey, { expiresIn: '1h' });
+        const refreshToken = generateRefreshToken(user.id, user.username);
 
-        res.json({ message: 'Login successful', token });
+        res.json({ message: 'Login successful', token, refreshToken });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Internal server error during login' });
+    }
+});
+
+app.post('/api/refresh-token', async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({ error: 'Refresh token is required' });
+        }
+
+        const decoded = jwt.verify(refreshToken, refreshSecretKey);
+
+        const newAccessToken = jwt.sign({ user: { id: decoded.user.id, username: decoded.user.username } }, jwtSecretKey, { expiresIn: '1h' });
+
+        res.json({ message: 'Token refreshed successfully', token: newAccessToken });
+    } catch (error) {
+        console.error(error);
+        if (error.name === 'TokenExpiredError') {
+            return res.status(UNAUTHORIZED).json({ message: 'Refresh token has expired.' });
+        }
+        return res.status(FORBIDDEN).json({ message: 'Invalid refresh token.' });
     }
 });
 
